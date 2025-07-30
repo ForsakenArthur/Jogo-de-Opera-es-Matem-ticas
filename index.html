@@ -101,46 +101,7 @@
 
     </div>
 
-    <!-- Módulos do Firebase -->
-    <script type="module">
-        // Importações necessárias do Firebase SDK
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // --- CONFIGURAÇÃO DO FIREBASE E AUTENTICAÇÃO ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
-
-        let userId = null;
-        let chartInstance = null;
-
-        // Gerencia o estado de autenticação do usuário
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                userId = user.uid;
-                console.log("Usuário autenticado:", userId);
-                await loadAndRenderChart(); // Carrega os dados do gráfico assim que o usuário é autenticado
-            } else {
-                console.log("Nenhum usuário autenticado.");
-            }
-        });
-        
-        // Tenta autenticar com token customizado ou de forma anônima
-        try {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token);
-            } else {
-                await signInAnonymously(auth);
-            }
-        } catch (error) {
-            console.error("Erro na autenticação:", error);
-        }
-
+    <script>
         // --- ELEMENTOS DA INTERFACE ---
         const menuView = document.getElementById('menu-view');
         const gameView = document.getElementById('game-view');
@@ -162,6 +123,7 @@
         let score = 0;
         let timer = 60;
         let timerInterval;
+        let chartInstance = null;
         let currentProblem = { num1: 0, num2: 0, operator: '+', answer: 0 };
 
         // --- LÓGICA DE NAVEGAÇÃO ENTRE TELAS ---
@@ -246,67 +208,48 @@
                  problemContainer.classList.add('incorrect-answer');
             }
             
-            // Remove a classe de animação para que possa ser adicionada novamente
             setTimeout(() => {
                 problemContainer.classList.remove('correct-answer', 'incorrect-answer');
             }, 500);
-
 
             answerInput.value = '';
             generateProblem();
         }
 
-        // --- LÓGICA DO FIREBASE E GRÁFICO ---
-        async function saveGameResult(finalScore) {
-            if (!userId) {
-                console.error("ID do usuário não encontrado. Não é possível salvar o resultado.");
-                return;
-            }
-            try {
-                const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/gameResults`), {
-                    score: finalScore,
-                    timestamp: serverTimestamp() // Usa o timestamp do servidor para consistência
-                });
-                console.log("Resultado salvo com ID: ", docRef.id);
-                await loadAndRenderChart(); // Atualiza o gráfico com o novo resultado
-            } catch (e) {
-                console.error("Erro ao adicionar documento: ", e);
-            }
+        // --- LÓGICA DO GRÁFICO E ARMAZENAMENTO LOCAL ---
+        function saveGameResult(finalScore) {
+            // Pega os resultados existentes do localStorage ou cria um array vazio
+            const results = JSON.parse(localStorage.getItem('mathGameResults')) || [];
+            
+            // Adiciona o novo resultado
+            results.push({
+                score: finalScore,
+                date: new Date().toISOString() // Salva a data para ordenação
+            });
+
+            // Salva o array atualizado de volta no localStorage
+            localStorage.setItem('mathGameResults', JSON.stringify(results));
+            
+            // Atualiza o gráfico com o novo resultado
+            loadAndRenderChart();
         }
 
-        async function loadAndRenderChart() {
-            if (!userId) return;
+        function loadAndRenderChart() {
+            const results = JSON.parse(localStorage.getItem('mathGameResults')) || [];
 
-            const resultsCollection = collection(db, `artifacts/${appId}/users/${userId}/gameResults`);
-            const q = query(resultsCollection);
-            const querySnapshot = await getDocs(q);
-
-            const results = [];
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
-                // Garante que o timestamp exista antes de tentar converter
-                if (data.timestamp) {
-                    results.push({
-                        score: data.score,
-                        date: data.timestamp.toDate()
-                    });
-                }
-            });
-            
-            // Ordena os resultados pela data no lado do cliente
-            results.sort((a, b) => a.date - b.date);
+            // Ordena os resultados pela data para garantir a ordem cronológica
+            results.sort((a, b) => new Date(a.date) - new Date(b.date));
 
             if (results.length === 0) {
                 noDataMessage.classList.remove('hidden');
                 document.getElementById('chart-container').classList.add('hidden');
                 return;
-            } else {
-                noDataMessage.classList.add('hidden');
-                document.getElementById('chart-container').classList.remove('hidden');
             }
             
-            // MUDANÇA 1: Cria rótulos vazios, pois não serão exibidos.
-            const labels = results.map(() => '');
+            noDataMessage.classList.add('hidden');
+            document.getElementById('chart-container').classList.remove('hidden');
+            
+            const labels = results.map(() => ''); // Rótulos vazios para um visual limpo
             const data = results.map(r => r.score);
 
             const ctx = document.getElementById('results-chart').getContext('2d');
@@ -340,17 +283,16 @@
                                 text: 'Pontos'
                             }
                         },
-                        // MUDANÇA 2: Configuração do eixo X para esconder tudo
                         x: {
                              title: {
-                                display: false // Esconde o título do eixo
+                                display: false
                             },
                             ticks: {
-                                display: false // Esconde os rótulos (ticks) do eixo
+                                display: false
                             },
                             grid: {
-                                display: false, // Esconde as linhas de grade verticais
-                                drawBorder: false // Esconde a borda do eixo
+                                display: false,
+                                drawBorder: false
                             }
                         }
                     },
@@ -369,6 +311,9 @@
         backToMenuBtn.addEventListener('click', () => showView('menu-view'));
         answerForm.addEventListener('submit', checkAnswer);
         
+        // --- INICIALIZAÇÃO ---
+        // Carrega o gráfico com dados existentes ao iniciar
+        loadAndRenderChart();
         // Inicia na tela de menu
         showView('menu-view');
 
