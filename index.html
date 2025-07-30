@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jogo de Matemática - Treine seu Cérebro</title>
+    
+    <!-- Tailwind CSS para estilização rápida e responsiva -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Chart.js para criar o gráfico de resultados -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Fonte Inter do Google Fonts para uma aparência moderna -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        /* Define a fonte Inter como padrão para todo o corpo do documento */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Estilo para a animação de resposta correta/incorreta */
+        .correct-answer {
+            animation: correct 0.5s ease;
+        }
+        .incorrect-answer {
+            animation: incorrect 0.5s ease;
+        }
+        @keyframes correct {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); background-color: #22c55e; }
+        }
+        @keyframes incorrect {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-10px); }
+            40% { transform: translateX(10px); }
+            60% { transform: translateX(-10px); }
+            80% { transform: translateX(10px); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-lg mx-auto p-4 md:p-6">
+
+        <!-- Tela de Menu/Início -->
+        <div id="menu-view" class="bg-white rounded-xl shadow-lg p-6 md:p-8 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-blue-600 mb-2">Jogo de Matemática</h1>
+            <p class="text-gray-500 mb-6">Treine seu cérebro com cálculos rápidos!</p>
+            <button id="start-game-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-lg transition duration-300">
+                Começar a Jogar
+            </button>
+            <div class="mt-8">
+                <h2 class="text-xl font-semibold mb-4">Sua Evolução</h2>
+                <div id="chart-container" class="relative h-64 w-full">
+                     <canvas id="results-chart"></canvas>
+                </div>
+                <p id="no-data-message" class="text-gray-400 mt-4 hidden">Jogue uma partida para ver seu progresso aqui!</p>
+            </div>
+        </div>
+
+        <!-- Tela do Jogo -->
+        <div id="game-view" class="hidden bg-white rounded-xl shadow-lg p-6 md:p-8">
+            <div class="flex justify-between items-center mb-6">
+                <div>
+                    <span class="text-gray-500">Pontuação</span>
+                    <p id="score" class="text-3xl font-bold">0</p>
+                </div>
+                <div>
+                    <span class="text-gray-500">Tempo</span>
+                    <p id="timer" class="text-3xl font-bold text-red-500">60</p>
+                </div>
+            </div>
+            
+            <div id="problem-container" class="bg-gray-100 rounded-lg p-6 text-center mb-6">
+                <p id="problem" class="text-4xl font-mono tracking-wider"></p>
+            </div>
+
+            <form id="answer-form">
+                <input type="number" id="answer-input" class="w-full border-2 border-gray-300 focus:border-blue-500 focus:ring-blue-500 rounded-lg p-4 text-center text-2xl transition duration-300" placeholder="Sua resposta" autocomplete="off">
+                <button type="submit" class="w-full mt-4 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-lg transition duration-300">
+                    Verificar
+                </button>
+            </form>
+        </div>
+
+        <!-- Tela de Fim de Jogo -->
+        <div id="game-over-view" class="hidden bg-white rounded-xl shadow-lg p-8 text-center">
+            <h2 class="text-3xl font-bold text-gray-800 mb-2">Tempo Esgotado!</h2>
+            <p class="text-gray-600 mb-4">Sua pontuação final foi:</p>
+            <p id="final-score" class="text-6xl font-bold text-blue-600 mb-8">0</p>
+            <button id="play-again-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg text-lg transition duration-300">
+                Jogar Novamente
+            </button>
+            <button id="back-to-menu-btn" class="w-full mt-3 bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-3 px-4 rounded-lg text-lg transition duration-300">
+                Voltar ao Menu
+            </button>
+        </div>
+
+    </div>
+
+    <!-- Módulos do Firebase -->
+    <script type="module">
+        // Importações necessárias do Firebase SDK
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- CONFIGURAÇÃO DO FIREBASE E AUTENTICAÇÃO ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        let userId = null;
+        let chartInstance = null;
+
+        // Gerencia o estado de autenticação do usuário
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+                console.log("Usuário autenticado:", userId);
+                await loadAndRenderChart(); // Carrega os dados do gráfico assim que o usuário é autenticado
+            } else {
+                console.log("Nenhum usuário autenticado.");
+            }
+        });
+        
+        // Tenta autenticar com token customizado ou de forma anônima
+        try {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        } catch (error) {
+            console.error("Erro na autenticação:", error);
+        }
+
+        // --- ELEMENTOS DA INTERFACE ---
+        const menuView = document.getElementById('menu-view');
+        const gameView = document.getElementById('game-view');
+        const gameOverView = document.getElementById('game-over-view');
+        
+        const startGameBtn = document.getElementById('start-game-btn');
+        const playAgainBtn = document.getElementById('play-again-btn');
+        const backToMenuBtn = document.getElementById('back-to-menu-btn');
+
+        const scoreDisplay = document.getElementById('score');
+        const timerDisplay = document.getElementById('timer');
+        const problemDisplay = document.getElementById('problem');
+        const answerForm = document.getElementById('answer-form');
+        const answerInput = document.getElementById('answer-input');
+        const finalScoreDisplay = document.getElementById('final-score');
+        const noDataMessage = document.getElementById('no-data-message');
+
+        // --- ESTADO DO JOGO ---
+        let score = 0;
+        let timer = 60;
+        let timerInterval;
+        let currentProblem = { num1: 0, num2: 0, operator: '+', answer: 0 };
+
+        // --- LÓGICA DE NAVEGAÇÃO ENTRE TELAS ---
+        function showView(viewId) {
+            menuView.classList.add('hidden');
+            gameView.classList.add('hidden');
+            gameOverView.classList.add('hidden');
+            document.getElementById(viewId).classList.remove('hidden');
+        }
+
+        // --- LÓGICA DO JOGO ---
+        function startGame() {
+            score = 0;
+            timer = 60;
+            scoreDisplay.textContent = score;
+            timerDisplay.textContent = timer;
+            
+            showView('game-view');
+            generateProblem();
+            answerInput.focus();
+
+            timerInterval = setInterval(updateTimer, 1000);
+        }
+
+        function endGame() {
+            clearInterval(timerInterval);
+            finalScoreDisplay.textContent = score;
+            showView('game-over-view');
+            saveGameResult(score);
+        }
+
+        function updateTimer() {
+            timer--;
+            timerDisplay.textContent = timer;
+            if (timer <= 0) {
+                endGame();
+            }
+        }
+
+        function generateProblem() {
+            const operators = ['+', '-', '*', '/'];
+            const operator = operators[Math.floor(Math.random() * operators.length)];
+            let num1, num2, answer;
+
+            switch (operator) {
+                case '+':
+                    num1 = Math.floor(Math.random() * 20) + 1;
+                    num2 = Math.floor(Math.random() * 20) + 1;
+                    answer = num1 + num2;
+                    break;
+                case '-':
+                    num1 = Math.floor(Math.random() * 20) + 1;
+                    num2 = Math.floor(Math.random() * num1) + 1; // Garante que o resultado não seja negativo
+                    answer = num1 - num2;
+                    break;
+                case '*':
+                    num1 = Math.floor(Math.random() * 10) + 2;
+                    num2 = Math.floor(Math.random() * 10) + 2;
+                    answer = num1 * num2;
+                    break;
+                case '/':
+                    num2 = Math.floor(Math.random() * 10) + 2;
+                    answer = Math.floor(Math.random() * 10) + 2;
+                    num1 = num2 * answer; // Garante que a divisão seja exata
+                    break;
+            }
+
+            currentProblem = { num1, num2, operator, answer };
+            problemDisplay.innerHTML = `${num1} <span class="text-blue-500">${operator}</span> ${num2}`;
+        }
+
+        function checkAnswer(e) {
+            e.preventDefault();
+            const userAnswer = parseInt(answerInput.value, 10);
+            const problemContainer = document.getElementById('problem-container');
+
+            if (userAnswer === currentProblem.answer) {
+                score++;
+                scoreDisplay.textContent = score;
+                problemContainer.classList.add('correct-answer');
+            } else {
+                 problemContainer.classList.add('incorrect-answer');
+            }
+            
+            // Remove a classe de animação para que possa ser adicionada novamente
+            setTimeout(() => {
+                problemContainer.classList.remove('correct-answer', 'incorrect-answer');
+            }, 500);
+
+
+            answerInput.value = '';
+            generateProblem();
+        }
+
+        // --- LÓGICA DO FIREBASE E GRÁFICO ---
+        async function saveGameResult(finalScore) {
+            if (!userId) {
+                console.error("ID do usuário não encontrado. Não é possível salvar o resultado.");
+                return;
+            }
+            try {
+                const docRef = await addDoc(collection(db, `artifacts/${appId}/users/${userId}/gameResults`), {
+                    score: finalScore,
+                    timestamp: serverTimestamp() // Usa o timestamp do servidor para consistência
+                });
+                console.log("Resultado salvo com ID: ", docRef.id);
+                await loadAndRenderChart(); // Atualiza o gráfico com o novo resultado
+            } catch (e) {
+                console.error("Erro ao adicionar documento: ", e);
+            }
+        }
+
+        async function loadAndRenderChart() {
+            if (!userId) return;
+
+            const resultsCollection = collection(db, `artifacts/${appId}/users/${userId}/gameResults`);
+            const q = query(resultsCollection);
+            const querySnapshot = await getDocs(q);
+
+            const results = [];
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                // Garante que o timestamp exista antes de tentar converter
+                if (data.timestamp) {
+                    results.push({
+                        score: data.score,
+                        date: data.timestamp.toDate()
+                    });
+                }
+            });
+            
+            // Ordena os resultados pela data no lado do cliente
+            results.sort((a, b) => a.date - b.date);
+
+            if (results.length === 0) {
+                noDataMessage.classList.remove('hidden');
+                document.getElementById('chart-container').classList.add('hidden');
+                return;
+            } else {
+                noDataMessage.classList.add('hidden');
+                document.getElementById('chart-container').classList.remove('hidden');
+            }
+            
+            // MUDANÇA 1: Cria rótulos vazios, pois não serão exibidos.
+            const labels = results.map(() => '');
+            const data = results.map(r => r.score);
+
+            const ctx = document.getElementById('results-chart').getContext('2d');
+            
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Pontuação por Partida',
+                        data: data,
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        fill: false, 
+                        tension: 0.3,
+                        pointBackgroundColor: 'rgba(59, 130, 246, 1)',
+                        pointRadius: 5,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Pontos'
+                            }
+                        },
+                        // MUDANÇA 2: Configuração do eixo X para esconder tudo
+                        x: {
+                             title: {
+                                display: false // Esconde o título do eixo
+                            },
+                            ticks: {
+                                display: false // Esconde os rótulos (ticks) do eixo
+                            },
+                            grid: {
+                                display: false, // Esconde as linhas de grade verticais
+                                drawBorder: false // Esconde a borda do eixo
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- EVENT LISTENERS ---
+        startGameBtn.addEventListener('click', startGame);
+        playAgainBtn.addEventListener('click', startGame);
+        backToMenuBtn.addEventListener('click', () => showView('menu-view'));
+        answerForm.addEventListener('submit', checkAnswer);
+        
+        // Inicia na tela de menu
+        showView('menu-view');
+
+    </script>
+</body>
+</html>
